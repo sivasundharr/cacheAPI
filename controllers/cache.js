@@ -106,7 +106,7 @@ export const updateDataByKey = async(req,res) =>{
     if(!newCache.get(key)) return res.json({'message':'key doesnot exist'})
 
     try{
-        await CacheData.findByIdAndUpdate({key:key},{$set:{data:data}});
+        await CacheData.findOneAndUpdate({key:key},{$set:{data:data}});
         const success = newCache.set(key,data);
         if(success) return res.json({'message':'updated'});
     }
