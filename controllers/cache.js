@@ -1,23 +1,25 @@
+import express from 'express';
 import NodeCache from "node-cache";
-import CacheData from '../models/cacheData.js';
 import Randomstring from "randomstring";
+import { createFunction,delFunction,updateFunction,
+    deleteAllFunction,checkMaxLimit } from '../utils/dbUtils.js';
 
 const newCache = new NodeCache({maxKeys:process.env.MKEYS,stdTTL:process.env.STDTTL});
 
 // whem ttl expired this callback called
 newCache.on("expired",function(key,value){
-    let resObj = { params:{key:key}};
-    const resp = getCachedDataByKey(resObj,res);
-    return resp;
+    newCache.del( key);
 });
-// Check the maximum limit of cache
-const checkMaxLimit = numberOfKeys => process.env.MAXIMUMKEYS == numberOfKeys ? true : false;
+
+newCache.on("del",(key,value)=>{
+    delFunction(key,value,express.response);
+})
 
 var forward = false;
 
 //Read/create a key
 
-export const getCachedDataByKey = async(req,res) =>{
+export const getCachedDataByKey = (req,res) =>{
     
     const { key }  = req.params;
 
@@ -30,23 +32,13 @@ export const getCachedDataByKey = async(req,res) =>{
 
         if(checkMaxLimit(currentKeysCount)){
             const oldKey = newCache.keys()[0];
-            try{
-                await CacheData.deleteOne({key:oldKey})
-            }catch(err){
-                return res.json({message:err.message})
-            }
             newCache.del(oldKey);
         }
         const randomStr = Randomstring.generate();
 
-        const success = newCache.set(randomStr,{});
+        const success = newCache.set(randomStr,{},process.env.STDTTL);
 
-        const newData = CacheData({key:randomStr,data:{}})
-        try{
-            await newData.save();
-        }catch(err){
-            return res.status(404).json({message:err.message});
-        }
+        createFunction(randomStr,{},res);
 
         if(forward){
             let obj ={ body:{ key:randomStr,data:req.params.data } }
@@ -56,7 +48,7 @@ export const getCachedDataByKey = async(req,res) =>{
     }
     else{
         newCache.del(key)
-        newCache.set(key,catchData);
+        newCache.set(key,catchData,process.env.STDTTL);
         console.log("Cache Hit");
         return res.json(catchData);
     }
@@ -65,17 +57,12 @@ export const getCachedDataByKey = async(req,res) =>{
 // Get All the keys
 
 export const getAllKeys = (req,res) =>{
-    try{
-        const keys = newCache.keys();
-        if(keys) return res.json(keys);
-    }
-    catch(err){
-        console.log(err);
-    }
+    const keys = newCache.keys();
+    if(keys) return res.json(keys);
 }
 // create new data for existing key
 
-export const createData = async(req,res) =>{
+export const createData = (req,res) =>{
     const { key,data } = req.body;
     let success;
 
@@ -87,67 +74,44 @@ export const createData = async(req,res) =>{
         return;
     }
     else{
-        success = newCache.set(key,data);
-        try{
-            await CacheData.findOneAndUpdate({key:key},{$set:{data:data}});
-        }catch(err){
-            return res.status(404).json({message:err.message});
-        }
+        success = newCache.set(key,data,process.env.STDTTL);
+        updateFunction(key,data,res);
     }
-    if(success) return res.json({'message':'Data created'})
+    if(success) return res.json({'data':data})
     
 }
 // update data for a parameter key
-export const updateDataByKey = async(req,res) =>{
-
+export const updateDataByKey = (req,res) =>{
     const { key } = req.params;
     const { data } = req.body;
 
     if(!newCache.get(key)) return res.json({'message':'key doesnot exist'})
-
-    try{
-        await CacheData.findByIdAndUpdate({key:key},{$set:{data:data}});
-        const success = newCache.set(key,data);
-        if(success) return res.json({'message':'updated'});
-    }
-    catch(err){
-        return res.json({message:err.message});
-    }
+    const success = newCache.set(key,data,process.env.STDTTL);
+    updateFunction(key,data,res);
+    if(success) return res.json({'data':data }); 
+    
 }
 
 //Remove a single key,value
 
-export const removeKey = async(req,res) =>{
+export const removeKey = (req,res) =>{
 
     const { key } = req.params;
-    try{
-        if(!newCache.get(key)) return res.json({'message':'key doesnot exist'})
-        
-        const result = newCache.del( key );
 
-        try{
-            await CacheData.findOneAndDelete({key:key});
-        }catch(err){
-            return res.json({message:err.message});
-        }
+    if(!newCache.get(key)) return res.json({'message':'key doesnot exist'})
+    
+    const result = newCache.del( key );
 
-        if(result) return res.json({"message":"key removed"});
-    }
-    catch(err){
-        console.log(err);
-    }
+    if(result) return res.json({"message":"key removed"});
+    
 }
 
 //Remove all the key value data
 
-export const removeAllKeys = async(req,res) =>{
+export const removeAllKeys = (req,res) =>{
     if(newCache.keys().length <= 0) return res.json([])
-    try{
-        await CacheData.deleteMany({});
-        newCache.flushAll();
-        res.json(newCache.keys());
-    }
-    catch(err){
-        console.log(err);
-    }
+    deleteAllFunction(res);
+    newCache.flushAll();
+    res.json(newCache.keys());
+    
 }
